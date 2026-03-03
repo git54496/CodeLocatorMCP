@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="/Users/yebingyue/code/baron/CodeLocatorMCP"
+ROOT_DIR="/Users/yebingyue/code/baron/CodeLocatorPRO"
 ADAPTER_DIR="$ROOT_DIR/mcp"
 BIN="$ADAPTER_DIR/build/install/CodeLocatorMCPAdapter/bin/CodeLocatorMCPAdapter"
 PORT="${1:-49622}"
