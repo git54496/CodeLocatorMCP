@@ -5,6 +5,8 @@
 # Explicitly ignore doc-level Finder metadata
 doc/.DS_Store
 
+doc/
+
 # IDE
 .idea/
 *.iml
