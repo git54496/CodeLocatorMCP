@@ -13,13 +13,34 @@
       --muted: #607089;
       --accent: #0b84f3;
       --accent-soft: rgba(11,132,243,0.16);
+      --left-pane-width: 340px;
+      --right-pane-width: 340px;
+      --splitter-width: 10px;
     }
     body { margin: 0; background: radial-gradient(circle at 20% -10%, #d7ecff, #f4f7fb 40%); color: var(--text); font-family: "SF Pro Text", "PingFang SC", sans-serif; }
     .top { display:flex; gap:8px; align-items:center; padding:12px 16px; border-bottom:1px solid var(--line); background:var(--panel); position: sticky; top:0; z-index:2; }
     .top input, .top select { border:1px solid var(--line); border-radius:8px; padding:8px 10px; background:#fff; }
     .top button { border:1px solid #1b75d0; background:#0b84f3; color:#fff; border-radius:8px; padding:8px 12px; cursor:pointer; }
-    .layout { display:grid; grid-template-columns: 340px 1fr 340px; gap: 12px; padding: 12px; height: calc(100vh - 64px); box-sizing: border-box; }
+    .layout { display:grid; grid-template-columns: var(--left-pane-width) var(--splitter-width) minmax(320px, 1fr) var(--splitter-width) var(--right-pane-width); gap: 0; padding: 12px; height: calc(100vh - 64px); box-sizing: border-box; }
     .panel { background: var(--panel); border:1px solid var(--line); border-radius:12px; overflow:auto; }
+    .splitter {
+      position: relative;
+      cursor: col-resize;
+      user-select: none;
+      touch-action: none;
+    }
+    .splitter::before {
+      content: "";
+      position: absolute;
+      top: 10px;
+      bottom: 10px;
+      left: calc(50% - 1px);
+      width: 2px;
+      border-radius: 99px;
+      background: #c8d4e6;
+    }
+    .splitter:hover::before { background: #9fb3ce; }
+    body.is-resizing { cursor: col-resize; user-select: none; }
     #tree { padding: 10px; font-size: 13px; overflow:auto; }
     #tree ul { list-style:none; padding-left:16px; margin:0; width:max-content; min-width:100%; }
     .tree-row { display:flex; align-items:center; gap:6px; padding: 4px 6px; border-radius: 6px; cursor:pointer; white-space: nowrap; width:max-content; min-width:100%; box-sizing:border-box; }
@@ -47,7 +68,20 @@
     #loadingMask.show { display: flex; }
     #props { padding:12px; font-size:13px; }
     .muted { color: var(--muted); }
+    .props-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+    .props-table th, .props-table td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; }
+    .props-table th { background: #f3f7ff; color: #3d4f6a; font-weight: 600; }
+    .props-key { white-space: nowrap; color: #2c4568; }
+    .props-value { word-break: break-word; }
     pre { white-space: pre-wrap; word-break: break-word; background:#f6f8fd; border:1px solid var(--line); border-radius:8px; padding:8px; }
+    @media (max-width: 1100px) {
+      .layout {
+        grid-template-columns: 1fr;
+        height: auto;
+      }
+      .splitter { display: none; }
+      #tree, #canvasWrap, #props { min-height: 280px; }
+    }
   </style>
 </head>
 <body>
@@ -55,13 +89,14 @@
     <label>Grab</label>
     <select id="grabSelect"></select>
     <label>Search</label>
-    <input id="search" placeholder="memAddr/class/text" />
+    <input id="search" placeholder="memAddr/id/class/text" />
     <button id="grabBtn">Grab</button>
     <button id="copyBtn">Copy memAddr</button>
     <span id="meta" class="muted"></span>
   </div>
-  <div class="layout">
+  <div class="layout" id="layout">
     <div class="panel" id="tree"></div>
+    <div class="splitter" id="leftSplitter" title="Drag to resize"></div>
     <div class="panel" id="canvasWrap">
       <div id="loadingMask">Loading...</div>
       <div id="stage">
@@ -69,6 +104,7 @@
         <canvas id="overlay"></canvas>
       </div>
     </div>
+    <div class="splitter" id="rightSplitter" title="Drag to resize"></div>
     <div class="panel" id="props"><div class="muted">Select a view node</div></div>
   </div>
 
@@ -85,6 +121,9 @@
     };
     const treeEl = document.getElementById('tree');
     const propsEl = document.getElementById('props');
+    const layoutEl = document.getElementById('layout');
+    const leftSplitterEl = document.getElementById('leftSplitter');
+    const rightSplitterEl = document.getElementById('rightSplitter');
     const grabSelect = document.getElementById('grabSelect');
     const searchInput = document.getElementById('search');
     const img = document.getElementById('screenImg');
@@ -95,6 +134,85 @@
     const grabBtn = document.getElementById('grabBtn');
     const ctx = overlay.getContext('2d');
     const metaEl = document.getElementById('meta');
+    const MIN_SIDE_WIDTH = 220;
+    const MIN_CENTER_WIDTH = 320;
+    let resizing = null;
+    const RAW_FIELD_MAP = {
+      a: 'mChildren',
+      b: 'mTopOffset',
+      c: 'mLeftOffset',
+      d: 'mLeft',
+      e: 'mRight',
+      f: 'mTop',
+      g: 'mBottom',
+      h: 'mScrollX',
+      i: 'mScrollY',
+      j: 'mScaleX',
+      k: 'mScaleY',
+      l: 'mTranslationX',
+      m: 'mTranslationY',
+      n: 'mDrawTop',
+      o: 'mDrawBottom',
+      p: 'mDrawLeft',
+      q: 'mDrawRight',
+      r: 'mPaddingTop',
+      s: 'mPaddingBottom',
+      t: 'mPaddingLeft',
+      u: 'mPaddingRight',
+      v: 'mMarginTop',
+      w: 'mMarginBottom',
+      x: 'mMarginLeft',
+      y: 'mMarginRight',
+      z: 'mLayoutWidth',
+      a0: 'mLayoutHeight',
+      a1: 'mIsClickable',
+      a2: 'mIsLongClickable',
+      a3: 'mIsFocusable',
+      a4: 'mIsPressed',
+      a5: 'mIsSelected',
+      a6: 'mIsFocused',
+      a7: 'mIsEnabled',
+      a8: 'mFlags',
+      a9: 'mCanProviderData',
+      aa: 'mType',
+      ab: 'mVisibility',
+      ac: 'mIdStr',
+      ad: 'mId',
+      ae: 'mAlpha',
+      af: 'mMemAddr',
+      ag: 'mClassName',
+      ah: 'mClickTag',
+      ai: 'mTouchTag',
+      aj: 'mFindViewByIdTag',
+      ak: 'mXmlTag',
+      al: 'mDrawableTag',
+      am: 'mScaleType',
+      an: 'mViewHolderTag',
+      ao: 'mAdapterTag',
+      ap: 'mBackgroundColor',
+      aq: 'mText',
+      ar: 'mSpan',
+      as: 'mTextColor',
+      at: 'mTextSize',
+      au: 'mSpacingAdd',
+      av: 'mLineHeight',
+      aw: 'mTextAlignment',
+      ax: 'mZIndex',
+      ay: 'mXmlJumpInfo',
+      az: 'mImagePath',
+      b0: 'mExtraInfos',
+      b1: 'mShadowDx',
+      b2: 'mShadowDy',
+      b3: 'mShadowRadius',
+      b4: 'mShadowColor',
+      df: 'mPivotX',
+      dg: 'mPivotY',
+      dk: 'mSlopBoundLeft',
+      dl: 'mSlopBoundRight',
+      dm: 'mSlopBoundUp',
+      dn: 'mSlopBoundBottom',
+      do: 'mLayoutRequested'
+    };
 
     async function boot() {
       const res = await fetch('/api/grabs');
@@ -211,16 +329,18 @@
       function match(n) {
         if (!q) return true;
         return (n.memAddr || '').toLowerCase().includes(q)
+          || (n.idStr || '').toLowerCase().includes(q)
           || (n.className || '').toLowerCase().includes(q)
           || (n.text || '').toLowerCase().includes(q);
       }
 
       function nodeHtml(n) {
         const selected = state.selected && state.selected.memAddr === n.memAddr ? 'selected' : '';
-        const label = `${n.className}  ${n.memAddr}${n.text ? '  ' + n.text : ''}`;
+        const idLabel = n.idStr ? `  id=${n.idStr}` : '';
+        const label = `${n.className}  ${n.memAddr}${idLabel}${n.text ? '  ' + n.text : ''}`;
         const hasChildren = (n.children || []).length > 0;
         const collapsed = !forceExpandForSearch && state.collapsed.has(n.memAddr);
-        const children = (n.children || []).filter(match).map(nodeHtml).join('');
+        const children = (n.children || []).map(nodeHtml).join('');
         if (!match(n) && !children) return '';
         const arrow = hasChildren ? (collapsed ? '&#9654;' : '&#9660;') : '';
         const arrowCls = hasChildren ? 'twisty' : 'twisty placeholder';
@@ -275,6 +395,21 @@
         propsEl.innerHTML = '<div class="muted">Select a view node</div>';
         return;
       }
+      const decodedRows = buildDecodedRawRows(state.selected.raw);
+      const decodedTable = decodedRows.length
+        ? `<table class="props-table">
+            <thead>
+              <tr><th>Raw Key</th><th>Mapped Field</th><th>Value</th></tr>
+            </thead>
+            <tbody>
+              ${decodedRows.map((row) => `<tr>
+                <td class="props-key">${escapeHtml(row.key)}</td>
+                <td class="props-key">${escapeHtml(row.mapped)}</td>
+                <td class="props-value">${escapeHtml(row.value)}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>`
+        : '<div class="muted">No decoded raw params</div>';
       propsEl.innerHTML = `<h3>${state.selected.className}</h3>
         <div><b>memAddr:</b> ${state.selected.memAddr}</div>
         <div><b>id:</b> ${state.selected.idStr || '-'}</div>
@@ -282,8 +417,55 @@
         <div><b>frame:</b> (${state.selected.left}, ${state.selected.top}, ${state.selected.width}, ${state.selected.height})</div>
         <div><b>alpha:</b> ${state.selected.alpha}</div>
         <div><b>visible:</b> ${state.selected.visible}</div>
+        <h4>Decoded Params (plugin mapping)</h4>
+        ${decodedTable}
         <h4>Raw</h4>
         <pre>${escapeHtml(JSON.stringify(state.selected.raw || {}, null, 2))}</pre>`;
+    }
+
+    function formatRawValue(key, value) {
+      if (key === 'a' && Array.isArray(value)) return `[${value.length} children]`;
+      if (key === 'ab') {
+        const raw = String(value);
+        if (raw === 'V' || raw === '0') return 'visible';
+        if (raw === 'I' || raw === '4') return 'invisible';
+        if (raw === 'G' || raw === '8') return 'gone';
+      }
+      if (key === 'aa') {
+        const typeMap = {
+          0: 'TYPE_NORMAL',
+          1: 'TYPE_TEXT',
+          2: 'TYPE_IMAGE',
+          3: 'TYPE_LINEAR',
+          4: 'TYPE_FRAME',
+          5: 'TYPE_RELATIVE'
+        };
+        if (typeof value === 'number' && typeMap[value]) return `${value} (${typeMap[value]})`;
+      }
+      if (value == null) return '';
+      if (typeof value === 'string') return value;
+      if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+      return JSON.stringify(value);
+    }
+
+    function sortRawKeys(keys) {
+      return keys.sort((a, b) => {
+        const pa = RAW_FIELD_MAP[a] ? 0 : 1;
+        const pb = RAW_FIELD_MAP[b] ? 0 : 1;
+        if (pa !== pb) return pa - pb;
+        if (a.length !== b.length) return a.length - b.length;
+        return a.localeCompare(b);
+      });
+    }
+
+    function buildDecodedRawRows(raw) {
+      if (!raw || typeof raw !== 'object') return [];
+      const keys = sortRawKeys(Object.keys(raw));
+      return keys.map((key) => {
+        const mapped = RAW_FIELD_MAP[key] || '(unknown)';
+        const value = formatRawValue(key, raw[key]);
+        return { key, mapped, value };
+      });
     }
 
     function redraw() {
@@ -327,6 +509,58 @@
         candidates: hits.map((g) => g.memAddr).filter(Boolean),
         pointKey: `${Math.round(x)}:${Math.round(y)}`
       };
+    }
+
+    function getLayoutVarPx(name, fallback) {
+      const raw = getComputedStyle(layoutEl).getPropertyValue(name).trim();
+      const value = Number.parseFloat(raw);
+      return Number.isFinite(value) ? value : fallback;
+    }
+
+    function clamp(v, min, max) {
+      return Math.min(Math.max(v, min), max);
+    }
+
+    function setPaneWidths(left, right) {
+      layoutEl.style.setProperty('--left-pane-width', `${Math.round(left)}px`);
+      layoutEl.style.setProperty('--right-pane-width', `${Math.round(right)}px`);
+      fitImageToViewport();
+      redraw();
+    }
+
+    function beginResize(side, clientX) {
+      if (window.matchMedia('(max-width: 1100px)').matches) return;
+      const rect = layoutEl.getBoundingClientRect();
+      resizing = {
+        side,
+        startX: clientX,
+        startLeft: getLayoutVarPx('--left-pane-width', 340),
+        startRight: getLayoutVarPx('--right-pane-width', 340),
+        layoutWidth: rect.width,
+        splitterWidth: getLayoutVarPx('--splitter-width', 10)
+      };
+      document.body.classList.add('is-resizing');
+    }
+
+    function onResizeMove(clientX) {
+      if (!resizing) return;
+      const delta = clientX - resizing.startX;
+      const reserved = resizing.splitterWidth * 2;
+      if (resizing.side === 'left') {
+        const maxLeft = resizing.layoutWidth - reserved - resizing.startRight - MIN_CENTER_WIDTH;
+        const nextLeft = clamp(resizing.startLeft + delta, MIN_SIDE_WIDTH, Math.max(MIN_SIDE_WIDTH, maxLeft));
+        setPaneWidths(nextLeft, resizing.startRight);
+      } else {
+        const maxRight = resizing.layoutWidth - reserved - resizing.startLeft - MIN_CENTER_WIDTH;
+        const nextRight = clamp(resizing.startRight - delta, MIN_SIDE_WIDTH, Math.max(MIN_SIDE_WIDTH, maxRight));
+        setPaneWidths(resizing.startLeft, nextRight);
+      }
+    }
+
+    function endResize() {
+      if (!resizing) return;
+      resizing = null;
+      document.body.classList.remove('is-resizing');
     }
 
     function escapeHtml(str) {
@@ -444,6 +678,22 @@
       if (loading) loadingMask.classList.add('show');
       else loadingMask.classList.remove('show');
     }
+
+    leftSplitterEl.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      beginResize('left', e.clientX);
+    });
+
+    rightSplitterEl.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      beginResize('right', e.clientX);
+    });
+
+    window.addEventListener('mousemove', (e) => onResizeMove(e.clientX));
+    window.addEventListener('mouseup', () => endResize());
+    window.addEventListener('blur', () => endResize());
 
     boot();
   </script>
