@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CodeLocator Viewer</title>
+  <style>
+    :root {
+      --bg: #f4f7fb;
+      --panel: #ffffff;
+      --line: #d9e1ee;
+      --text: #182133;
+      --muted: #607089;
+      --accent: #0b84f3;
+      --accent-soft: rgba(11,132,243,0.16);
+    }
+    body { margin: 0; background: radial-gradient(circle at 20% -10%, #d7ecff, #f4f7fb 40%); color: var(--text); font-family: "SF Pro Text", "PingFang SC", sans-serif; }
+    .top { display:flex; gap:8px; align-items:center; padding:12px 16px; border-bottom:1px solid var(--line); background:var(--panel); position: sticky; top:0; z-index:2; }
+    .top input, .top select { border:1px solid var(--line); border-radius:8px; padding:8px 10px; background:#fff; }
+    .top button { border:1px solid #1b75d0; background:#0b84f3; color:#fff; border-radius:8px; padding:8px 12px; cursor:pointer; }
+    .layout { display:grid; grid-template-columns: 340px 1fr 340px; gap: 12px; padding: 12px; height: calc(100vh - 64px); box-sizing: border-box; }
+    .panel { background: var(--panel); border:1px solid var(--line); border-radius:12px; overflow:auto; }
+    #tree { padding: 10px; font-size: 13px; overflow:auto; }
+    #tree ul { list-style:none; padding-left:16px; margin:0; width:max-content; min-width:100%; }
+    .tree-row { display:flex; align-items:center; gap:6px; padding: 4px 6px; border-radius: 6px; cursor:pointer; white-space: nowrap; width:max-content; min-width:100%; box-sizing:border-box; }
+    .tree-row:hover { background:#edf4ff; }
+    .tree-row.selected { background: var(--accent-soft); border-left:3px solid var(--accent); }
+    .twisty { width:12px; color:var(--muted); user-select:none; text-align:center; cursor:pointer; font-size:11px; }
+    .twisty.placeholder { visibility:hidden; cursor:default; }
+    .tree-label { white-space:nowrap; }
+    #canvasWrap { position:relative; overflow:hidden; background:#e8eef7; display:flex; align-items:center; justify-content:center; }
+    #stage { position:relative; flex:none; }
+    #screenImg { display:block; user-select:none; -webkit-user-drag:none; }
+    #overlay { position:absolute; inset:0; pointer-events:auto; cursor:crosshair; }
+    #props { padding:12px; font-size:13px; }
+    .muted { color: var(--muted); }
+    pre { white-space: pre-wrap; word-break: break-word; background:#f6f8fd; border:1px solid var(--line); border-radius:8px; padding:8px; }
+  </style>
+</head>
+<body>
+  <div class="top">
+    <label>Grab</label>
+    <select id="grabSelect"></select>
+    <label>Search</label>
+    <input id="search" placeholder="memAddr/class/text" />
+    <button id="copyBtn">Copy memAddr</button>
+    <span id="meta" class="muted"></span>
+  </div>
+  <div class="layout">
+    <div class="panel" id="tree"></div>
+    <div class="panel" id="canvasWrap">
+      <div id="stage">
+        <img id="screenImg" alt="screenshot" />
+        <canvas id="overlay"></canvas>
+      </div>
+    </div>
+    <div class="panel" id="props"><div class="muted">Select a view node</div></div>
+  </div>
+
+  <script>
+    const state = {
+      grabs: [],
+      snapshot: null,
+      selected: null,
+      scale: 1,
+      collapsed: new Set(),
+      geomList: [],
+      geomByMem: {},
+      hitCycle: null
+    };
+    const treeEl = document.getElementById('tree');
+    const propsEl = document.getElementById('props');
+    const grabSelect = document.getElementById('grabSelect');
+    const searchInput = document.getElementById('search');
+    const img = document.getElementById('screenImg');
+    const overlay = document.getElementById('overlay');
+    const canvasWrap = document.getElementById('canvasWrap');
+    const stageEl = document.getElementById('stage');
+    const ctx = overlay.getContext('2d');
+    const metaEl = document.getElementById('meta');
+
+    async function boot() {
+      const res = await fetch('/api/grabs');
+      state.grabs = await res.json();
+      renderGrabOptions();
+      const queryGrab = new URLSearchParams(location.search).get('grab_id');
+      const first = queryGrab || (state.grabs[0] && state.grabs[0].grabId);
+      if (first) await loadGrab(first);
+    }
+
+    function renderGrabOptions() {
+      grabSelect.innerHTML = state.grabs.map(g => `<option value="${g.grabId}">${g.grabId}</option>`).join('');
+      grabSelect.onchange = () => loadGrab(grabSelect.value);
+    }
+
+    async function loadGrab(grabId) {
+      grabSelect.value = grabId;
+      const snapRes = await fetch(`/api/grab/${grabId}/snapshot`);
+      state.snapshot = await snapRes.json();
+      state.selected = null;
+      state.collapsed = new Set();
+      state.hitCycle = null;
+      buildGeometryIndex();
+      metaEl.textContent = `${state.snapshot.meta.source} | ${state.snapshot.meta.packageName || '-'} | ${state.snapshot.meta.activity || '-'}`;
+      img.src = `/api/grab/${grabId}/screenshot`;
+      img.onload = () => {
+        fitImageToViewport();
+        redraw();
+      };
+      renderTree();
+      renderProps();
+    }
+
+    function flatten(nodes, out = []) {
+      nodes.forEach((n) => {
+        out.push(n);
+        flatten(n.children || [], out);
+      });
+      return out;
+    }
+
+    function buildGeometryIndex() {
+      const list = [];
+      const byMem = {};
+      let order = 0;
+
+      function walk(nodes, parentAbsLeft, parentAbsTop, depth) {
+        nodes.forEach((n) => {
+          const left = Number(n.left || 0);
+          const top = Number(n.top || 0);
+          const width = Number(n.width || 0);
+          const height = Number(n.height || 0);
+          const absLeft = parentAbsLeft + left;
+          const absTop = parentAbsTop + top;
+          const geom = {
+            memAddr: n.memAddr,
+            absLeft,
+            absTop,
+            width,
+            height,
+            depth,
+            order: order++,
+            visible: n.visible !== false,
+            alpha: Number(n.alpha == null ? 1 : n.alpha)
+          };
+          list.push(geom);
+          if (n.memAddr) {
+            byMem[n.memAddr] = geom;
+          }
+          walk(n.children || [], absLeft, absTop, depth + 1);
+        });
+      }
+
+      walk(state.snapshot.uiTree || [], 0, 0, 0);
+      state.geomList = list;
+      state.geomByMem = byMem;
+    }
+
+    function fitImageToViewport() {
+      if (!img.naturalWidth || !img.naturalHeight) return;
+      const w = canvasWrap.clientWidth;
+      const h = canvasWrap.clientHeight;
+      if (w <= 0 || h <= 0) return;
+
+      const scale = Math.min(w / img.naturalWidth, h / img.naturalHeight);
+      const renderW = Math.max(1, Math.floor(img.naturalWidth * scale));
+      const renderH = Math.max(1, Math.floor(img.naturalHeight * scale));
+
+      state.scale = scale;
+      stageEl.style.width = `${renderW}px`;
+      stageEl.style.height = `${renderH}px`;
+      img.style.width = `${renderW}px`;
+      img.style.height = `${renderH}px`;
+      overlay.width = renderW;
+      overlay.height = renderH;
+    }
+
+    function renderTree() {
+      const q = searchInput.value.trim().toLowerCase();
+      const forceExpandForSearch = !!q;
+
+      function match(n) {
+        if (!q) return true;
+        return (n.memAddr || '').toLowerCase().includes(q)
+          || (n.className || '').toLowerCase().includes(q)
+          || (n.text || '').toLowerCase().includes(q);
+      }
+
+      function nodeHtml(n) {
+        const selected = state.selected && state.selected.memAddr === n.memAddr ? 'selected' : '';
+        const label = `${n.className}  ${n.memAddr}${n.text ? '  ' + n.text : ''}`;
+        const hasChildren = (n.children || []).length > 0;
+        const collapsed = !forceExpandForSearch && state.collapsed.has(n.memAddr);
+        const children = (n.children || []).filter(match).map(nodeHtml).join('');
+        if (!match(n) && !children) return '';
+        const arrow = hasChildren ? (collapsed ? '&#9654;' : '&#9660;') : '';
+        const arrowCls = hasChildren ? 'twisty' : 'twisty placeholder';
+        return `
+          <li>
+            <div class="tree-row ${selected}" data-action="select" data-mem="${n.memAddr}">
+              <span class="${arrowCls}" data-action="toggle" data-mem="${n.memAddr}">${arrow}</span>
+              <span class="tree-label">${escapeHtml(label)}</span>
+            </div>
+            ${children && !collapsed ? `<ul>${children}</ul>` : ''}
+          </li>
+        `;
+      }
+
+      const html = `<ul>${(state.snapshot.uiTree || []).map(nodeHtml).join('')}</ul>`;
+      treeEl.innerHTML = html;
+    }
+
+    function findPath(nodes, targetMem, path = []) {
+      for (const node of nodes) {
+        path.push(node.memAddr);
+        if (node.memAddr === targetMem) return path.slice();
+        const found = findPath(node.children || [], targetMem, path);
+        if (found) return found;
+        path.pop();
+      }
+      return null;
+    }
+
+    function selectByMem(mem, scrollIntoView) {
+      const all = flatten(state.snapshot.uiTree || []);
+      state.selected = all.find(n => n.memAddr === mem) || null;
+      if (state.selected) {
+        const path = findPath(state.snapshot.uiTree || [], mem) || [];
+        path.slice(0, -1).forEach((m) => state.collapsed.delete(m));
+      }
+      renderTree();
+      renderProps();
+      redraw();
+      if (scrollIntoView && state.selected) {
+        requestAnimationFrame(() => {
+          const row = treeEl.querySelector(`.tree-row[data-mem="${cssAttrEscape(mem)}"]`);
+          if (row) {
+            row.scrollIntoView({ block: 'center', inline: 'nearest' });
+          }
+        });
+      }
+    }
+
+    function renderProps() {
+      if (!state.selected) {
+        propsEl.innerHTML = '<div class="muted">Select a view node</div>';
+        return;
+      }
+      propsEl.innerHTML = `<h3>${state.selected.className}</h3>
+        <div><b>memAddr:</b> ${state.selected.memAddr}</div>
+        <div><b>id:</b> ${state.selected.idStr || '-'}</div>
+        <div><b>text:</b> ${state.selected.text || '-'}</div>
+        <div><b>frame:</b> (${state.selected.left}, ${state.selected.top}, ${state.selected.width}, ${state.selected.height})</div>
+        <div><b>alpha:</b> ${state.selected.alpha}</div>
+        <div><b>visible:</b> ${state.selected.visible}</div>
+        <h4>Raw</h4>
+        <pre>${escapeHtml(JSON.stringify(state.selected.raw || {}, null, 2))}</pre>`;
+    }
+
+    function redraw() {
+      ctx.clearRect(0, 0, overlay.width, overlay.height);
+      if (!state.selected) return;
+      const geom = state.geomByMem[state.selected.memAddr];
+      if (!geom) return;
+      const s = state.scale || 1;
+      const x = Number(geom.absLeft || 0) * s;
+      const y = Number(geom.absTop || 0) * s;
+      const w = Number(geom.width || 0) * s;
+      const h = Number(geom.height || 0) * s;
+      ctx.fillStyle = 'rgba(11,132,243,0.18)';
+      ctx.strokeStyle = '#0b84f3';
+      ctx.lineWidth = 2;
+      ctx.fillRect(x, y, w, h);
+      ctx.strokeRect(x, y, w, h);
+    }
+
+    function hitTestCandidates(clientX, clientY) {
+      const rect = overlay.getBoundingClientRect();
+      const x = (clientX - rect.left) / (state.scale || 1);
+      const y = (clientY - rect.top) / (state.scale || 1);
+      const hits = (state.geomList || [])
+        .filter((g) => {
+          const left = Number(g.absLeft || 0);
+          const top = Number(g.absTop || 0);
+          const width = Number(g.width || 0);
+          const height = Number(g.height || 0);
+          const visible = g.visible && Number(g.alpha || 0) > 0;
+          return visible && width > 0 && height > 0 && x >= left && y >= top && x <= left + width && y <= top + height;
+        });
+      hits.sort((a, b) => {
+        if (b.depth !== a.depth) return b.depth - a.depth;
+        const areaA = Number(a.width || 0) * Number(a.height || 0);
+        const areaB = Number(b.width || 0) * Number(b.height || 0);
+        if (areaA !== areaB) return areaA - areaB;
+        return b.order - a.order;
+      });
+      return {
+        candidates: hits.map((g) => g.memAddr).filter(Boolean),
+        pointKey: `${Math.round(x)}:${Math.round(y)}`
+      };
+    }
+
+    function escapeHtml(str) {
+      return str.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+    }
+
+    function cssAttrEscape(str) {
+      return (str || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    }
+
+    treeEl.onclick = (e) => {
+      const toggle = e.target.closest('[data-action="toggle"]');
+      if (toggle && !toggle.classList.contains('placeholder')) {
+        const mem = toggle.getAttribute('data-mem');
+        if (state.collapsed.has(mem)) state.collapsed.delete(mem);
+        else state.collapsed.add(mem);
+        renderTree();
+        return;
+      }
+      const row = e.target.closest('[data-action="select"]');
+      if (row) {
+        const mem = row.getAttribute('data-mem');
+        selectByMem(mem, false);
+      }
+    };
+
+    overlay.onclick = (e) => {
+      if (!state.snapshot) return;
+      const hit = hitTestCandidates(e.clientX, e.clientY);
+      const candidates = hit.candidates || [];
+      if (!candidates.length) return;
+
+      let idx = 0;
+      if (
+        state.hitCycle &&
+        state.hitCycle.pointKey === hit.pointKey &&
+        arraysEqual(state.hitCycle.candidates, candidates)
+      ) {
+        idx = (state.hitCycle.index + 1) % candidates.length;
+      }
+      state.hitCycle = { pointKey: hit.pointKey, candidates, index: idx };
+      selectByMem(candidates[idx], true);
+    };
+
+    window.addEventListener('resize', () => {
+      fitImageToViewport();
+      redraw();
+    });
+
+    searchInput.oninput = () => renderTree();
+    document.getElementById('copyBtn').onclick = async () => {
+      if (!state.selected) return;
+      await navigator.clipboard.writeText(state.selected.memAddr);
+    };
+
+    function arraysEqual(a, b) {
+      if (!a || !b || a.length !== b.length) return false;
+      for (let i = 0; i < a.length; i += 1) {
+        if (a[i] !== b[i]) return false;
+      }
+      return true;
+    }
+
+    boot();
+  </script>
+</body>
+</html>
