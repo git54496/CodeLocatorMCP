@@ -32,6 +32,7 @@ object Constants {
     const val TOOL_GET_VIEW_DATA = "get_view_data"
     const val TOOL_GET_VIEW_CLASS_INFO = "get_view_class_info"
     const val TOOL_TRACE_TOUCH = "trace_touch"
+    const val TOOL_GET_COMPOSE_NODE = "get_compose_node"
 
     val home: Path = Path.of(System.getProperty("user.home"))
     val mcpRoot: Path = home.resolve(".codeLocator_mcp")

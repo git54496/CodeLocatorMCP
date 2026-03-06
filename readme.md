@@ -100,7 +100,16 @@ $BIN viewer serve --port 49622
 
 # 启动 MCP stdio 服务
 $BIN mcp
+
+# 查询 Compose 语义节点（node_id 或 compose_key）
+$BIN inspect compose-node --grab-id <grab_id> --node-id <compose_node_id_or_compose_key>
 ```
+
+## Compose 兼容说明
+
+- `codelocatorpro` 已支持解析 `mComposeNodes`（`b5`）并生成 `compose_index.json`。
+- Viewer 支持显示 Compose Semantics 表格，并支持 `nodeId/testTag/contentDescription` 搜索。
+- MCP/CLI 新增 `get_compose_node` 能力，便于按 `node_id` 或 `compose_key` 精确检索。
 
 ## `build.sh` 参数
 
@@ -118,9 +127,11 @@ $BIN mcp
 - `https://github.com/git54496/homebrew-codelocatorpro`
 - `Formula/grab.rb`
 
-当前配方默认通过 git 追踪 `CodeLocatorPRO` 的 `main` 分支，适合快速分发。建议后续切换到 tag 固定版本：
+当前仓库已引入统一版本文件 `VERSION`，`grab --version` 与 adapter 构建版本会保持一致。正式发布 Homebrew 升级链路时，按以下流程操作：
 
-1. 发布 `vX.Y.Z` tag。
-2. 将 `Formula/grab.rb` 的 `url` 改为对应 tag 压缩包地址。
-3. 填入该压缩包的 `sha256`。
-4. `brew update && brew upgrade grab` 验证升级链路。
+1. 更新 `VERSION`，推送 `codelocatorpro`，并创建对应 tag，例如 `v0.2.0`。
+2. 进入 tap 仓库 `homebrew-codelocatorpro`，执行 `./scripts/update_grab_formula.sh 0.2.0`。
+3. 提交并推送 tap 仓库中的 `Formula/grab.rb`。
+4. 用户执行 `brew update && brew upgrade grab`。
+
+说明：历史上安装过 `version "main"` 配方的机器，在切到首个版本化配方时，可能需要一次性执行 `brew reinstall grab`；之后即可正常走 `brew upgrade grab`。

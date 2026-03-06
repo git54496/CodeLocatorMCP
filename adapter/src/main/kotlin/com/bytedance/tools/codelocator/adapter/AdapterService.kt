@@ -94,4 +94,64 @@ class AdapterService(
             )
         }
     }
+
+    fun getComposeNode(grabId: String, nodeIdOrKey: String): ToolResult<Map<String, Any?>> {
+        val composeIndex = store.getComposeIndex(grabId)
+        if (composeIndex.isEmpty()) {
+            return ToolResult(
+                success = false,
+                error = McpError("COMPOSE_NOT_FOUND", "No compose nodes found in snapshot"),
+                grabId = grabId
+            )
+        }
+
+        val exact = composeIndex[nodeIdOrKey]
+        if (exact != null) {
+            return ToolResult(
+                success = true,
+                data = linkedMapOf(
+                    "compose_key" to exact.composeKey,
+                    "host_mem_addr" to exact.hostMemAddr,
+                    "node_id" to exact.nodeId,
+                    "structured" to exact
+                ),
+                grabId = grabId
+            )
+        }
+
+        val suffixMatches = composeIndex.values.filter { it.nodeId == nodeIdOrKey || it.composeKey.endsWith(":$nodeIdOrKey") }
+        if (suffixMatches.isEmpty()) {
+            return ToolResult(
+                success = false,
+                error = McpError("COMPOSE_NOT_FOUND", "compose node not found: $nodeIdOrKey"),
+                grabId = grabId
+            )
+        }
+        if (suffixMatches.size > 1) {
+            return ToolResult(
+                success = false,
+                error = McpError(
+                    "COMPOSE_NODE_AMBIGUOUS",
+                    "compose node id is ambiguous, use compose_key",
+                    mapOf(
+                        "query" to nodeIdOrKey,
+                        "candidates" to suffixMatches.take(20).map { it.composeKey }
+                    )
+                ),
+                grabId = grabId
+            )
+        }
+
+        val node = suffixMatches.first()
+        return ToolResult(
+            success = true,
+            data = linkedMapOf(
+                "compose_key" to node.composeKey,
+                "host_mem_addr" to node.hostMemAddr,
+                "node_id" to node.nodeId,
+                "structured" to node
+            ),
+            grabId = grabId
+        )
+    }
 }

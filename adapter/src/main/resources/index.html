@@ -109,7 +109,7 @@
     <label>Grab</label>
     <select id="grabSelect"></select>
     <label>Search</label>
-    <input id="search" placeholder="memAddr/id/class/text" />
+    <input id="search" placeholder="memAddr/id/class/text/testTag/nodeId" />
     <button id="grabBtn">Grab</button>
     <button id="copyBtn">Copy memAddr</button>
     <button id="exportAgentBtn">导出到agent</button>
@@ -230,6 +230,7 @@
       b2: 'mShadowDy',
       b3: 'mShadowRadius',
       b4: 'mShadowColor',
+      b5: 'mComposeNodes',
       df: 'mPivotX',
       dg: 'mPivotY',
       dk: 'mSlopBoundLeft',
@@ -290,6 +291,29 @@
         flatten(n.children || [], out);
       });
       return out;
+    }
+
+    function flattenCompose(nodes, out = [], depth = 0) {
+      (nodes || []).forEach((n) => {
+        out.push({ node: n, depth });
+        flattenCompose(n.children || [], out, depth + 1);
+      });
+      return out;
+    }
+
+    function countComposeNodes(nodes) {
+      return flattenCompose(nodes || []).length;
+    }
+
+    function hasComposeMatch(viewNode, query) {
+      if (!query) return false;
+      const flat = flattenCompose(viewNode.composeNodes || []);
+      return flat.some(({ node }) => {
+        return (node.nodeId || '').toLowerCase().includes(query)
+          || (node.text || '').toLowerCase().includes(query)
+          || (node.testTag || '').toLowerCase().includes(query)
+          || (node.contentDescription || '').toLowerCase().includes(query);
+      });
     }
 
     function buildGeometryIndex() {
@@ -357,13 +381,16 @@
         return (n.memAddr || '').toLowerCase().includes(q)
           || (n.idStr || '').toLowerCase().includes(q)
           || (n.className || '').toLowerCase().includes(q)
-          || (n.text || '').toLowerCase().includes(q);
+          || (n.text || '').toLowerCase().includes(q)
+          || hasComposeMatch(n, q);
       }
 
       function nodeHtml(n) {
         const selected = state.selected && state.selected.memAddr === n.memAddr ? 'selected' : '';
         const idLabel = n.idStr ? `  id=${n.idStr}` : '';
-        const label = `${n.className}  ${n.memAddr}${idLabel}${n.text ? '  ' + n.text : ''}`;
+        const composeCount = countComposeNodes(n.composeNodes || []);
+        const composeLabel = composeCount > 0 ? `  compose=${composeCount}` : '';
+        const label = `${n.className}  ${n.memAddr}${idLabel}${n.text ? '  ' + n.text : ''}${composeLabel}`;
         const hasChildren = (n.children || []).length > 0;
         const collapsed = !forceExpandForSearch && state.collapsed.has(n.memAddr);
         const children = (n.children || []).map(nodeHtml).join('');
@@ -421,6 +448,7 @@
         propsEl.innerHTML = '<div class="muted">Select a view node</div>';
         return;
       }
+      const composeTable = buildComposeTable(state.selected.composeNodes || []);
       const decodedRows = buildDecodedRawRows(state.selected.raw);
       const decodedTable = decodedRows.length
         ? `<table class="props-table">
@@ -443,10 +471,59 @@
         <div><b>frame:</b> (${state.selected.left}, ${state.selected.top}, ${state.selected.width}, ${state.selected.height})</div>
         <div><b>alpha:</b> ${state.selected.alpha}</div>
         <div><b>visible:</b> ${state.selected.visible}</div>
+        <h4>Compose Semantics</h4>
+        ${composeTable}
         <h4>Decoded Params (plugin mapping)</h4>
         ${decodedTable}
         <h4>Raw</h4>
         <pre>${escapeHtml(JSON.stringify(state.selected.raw || {}, null, 2))}</pre>`;
+    }
+
+    function buildComposeTable(composeNodes) {
+      const rows = flattenCompose(composeNodes || []);
+      if (!rows.length) {
+        return '<div class="muted">No compose semantics nodes</div>';
+      }
+      return `<div><b>nodeCount:</b> ${rows.length}</div>
+        <table class="props-table">
+          <thead>
+            <tr>
+              <th>depth</th>
+              <th>nodeId</th>
+              <th>text</th>
+              <th>testTag</th>
+              <th>contentDesc</th>
+              <th>bounds</th>
+              <th>state</th>
+              <th>actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map(({ node, depth }) => `<tr>
+              <td class="props-key">${depth}</td>
+              <td class="props-value">${escapeHtml(node.nodeId || '')}</td>
+              <td class="props-value">${escapeHtml(node.text || '')}</td>
+              <td class="props-value">${escapeHtml(node.testTag || '')}</td>
+              <td class="props-value">${escapeHtml(node.contentDescription || '')}</td>
+              <td class="props-value">(${Number(node.left || 0)}, ${Number(node.top || 0)}, ${Number(node.right || 0)}, ${Number(node.bottom || 0)})</td>
+              <td class="props-value">${escapeHtml(formatComposeState(node))}</td>
+              <td class="props-value">${escapeHtml((node.actions || []).join(', '))}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>`;
+    }
+
+    function formatComposeState(node) {
+      const flags = [];
+      if (node.clickable) flags.push('clickable');
+      if (node.enabled === false) flags.push('disabled');
+      if (node.focused) flags.push('focused');
+      if (node.visibleToUser === false) flags.push('not-visible');
+      if (node.selected) flags.push('selected');
+      if (node.checkable) flags.push('checkable');
+      if (node.checked) flags.push('checked');
+      if (node.focusable) flags.push('focusable');
+      return flags.join(', ') || '-';
     }
 
     function formatRawValue(key, value) {
@@ -590,7 +667,8 @@
     }
 
     function escapeHtml(str) {
-      return str.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+      const text = str == null ? '' : String(str);
+      return text.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
     }
 
     function cssAttrEscape(str) {
@@ -724,6 +802,7 @@
         `screenshot_path: ${paths && paths.screenshotPath ? paths.screenshotPath : ''}`,
         `snapshot_path: ${paths && paths.snapshotPath ? paths.snapshotPath : ''}`,
         `index_path: ${paths && paths.indexPath ? paths.indexPath : ''}`,
+        `compose_index_path: ${paths && paths.composeIndexPath ? paths.composeIndexPath : ''}`,
         `grab_dir: ${paths && paths.grabDir ? paths.grabDir : ''}`
       ];
       return lines.join('\n');

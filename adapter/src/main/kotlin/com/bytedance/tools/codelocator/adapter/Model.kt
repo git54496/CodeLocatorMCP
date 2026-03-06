@@ -21,6 +21,7 @@ data class ViewNodeDto(
     val height: Int = 0,
     val visible: Boolean = true,
     val alpha: Double = 1.0,
+    val composeNodes: List<ComposeNodeDto> = emptyList(),
     val children: List<ViewNodeDto> = emptyList(),
     val raw: Map<String, Any?> = emptyMap()
 )
@@ -29,7 +30,8 @@ data class GrabSnapshot(
     val meta: GrabMeta,
     val uiTree: List<ViewNodeDto>,
     val screenshotRef: String? = null,
-    val indexes: Map<String, ViewIndexItem> = emptyMap()
+    val indexes: Map<String, ViewIndexItem> = emptyMap(),
+    val composeIndexes: Map<String, ComposeIndexItem> = emptyMap()
 )
 
 data class ViewIndexItem(
@@ -41,6 +43,50 @@ data class ViewIndexItem(
     val top: Int = 0,
     val width: Int = 0,
     val height: Int = 0
+)
+
+data class ComposeNodeDto(
+    val nodeId: String,
+    val left: Int = 0,
+    val top: Int = 0,
+    val right: Int = 0,
+    val bottom: Int = 0,
+    val text: String? = null,
+    val contentDescription: String? = null,
+    val testTag: String? = null,
+    val clickable: Boolean = false,
+    val enabled: Boolean = true,
+    val focused: Boolean = false,
+    val visibleToUser: Boolean = true,
+    val selected: Boolean = false,
+    val checkable: Boolean = false,
+    val checked: Boolean = false,
+    val focusable: Boolean = false,
+    val actions: List<String> = emptyList(),
+    val children: List<ComposeNodeDto> = emptyList(),
+    val raw: Map<String, Any?> = emptyMap()
+)
+
+data class ComposeIndexItem(
+    val composeKey: String,
+    val hostMemAddr: String,
+    val nodeId: String,
+    val left: Int = 0,
+    val top: Int = 0,
+    val right: Int = 0,
+    val bottom: Int = 0,
+    val text: String? = null,
+    val contentDescription: String? = null,
+    val testTag: String? = null,
+    val clickable: Boolean = false,
+    val enabled: Boolean = true,
+    val focused: Boolean = false,
+    val visibleToUser: Boolean = true,
+    val selected: Boolean = false,
+    val checkable: Boolean = false,
+    val checked: Boolean = false,
+    val focusable: Boolean = false,
+    val actions: List<String> = emptyList()
 )
 
 data class McpError(

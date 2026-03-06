@@ -30,7 +30,7 @@ class McpStdioServer(private val service: AdapterService) {
                 "initialize" -> response(id, mapOf(
                     "protocolVersion" to "2024-11-05",
                     "capabilities" to mapOf("tools" to mapOf("listChanged" to false)),
-                    "serverInfo" to mapOf("name" to "codelocator-adapter", "version" to "0.1.0")
+                    "serverInfo" to mapOf("name" to "codelocator-adapter", "version" to BuildInfo.version)
                 ))
 
                 "notifications/initialized" -> null
@@ -84,6 +84,11 @@ class McpStdioServer(private val service: AdapterService) {
                     val grabId = args.requireString("grab_id")
                     service.traceTouch(grabId)
                 }
+                Constants.TOOL_GET_COMPOSE_NODE -> {
+                    val grabId = args.requireString("grab_id")
+                    val nodeId = args.requireString("node_id")
+                    service.getComposeNode(grabId, nodeId)
+                }
                 else -> ToolResult<Any>(
                     success = false,
                     error = McpError("INVALID_ARGUMENT", "unknown tool: $name")
@@ -135,6 +140,14 @@ class McpStdioServer(private val service: AdapterService) {
                 "type" to "object",
                 "properties" to mapOf("grab_id" to mapOf("type" to "string")),
                 "required" to listOf("grab_id")
+            )),
+            tool(Constants.TOOL_GET_COMPOSE_NODE, "Get compose node by node_id or compose_key", mapOf(
+                "type" to "object",
+                "properties" to mapOf(
+                    "grab_id" to mapOf("type" to "string"),
+                    "node_id" to mapOf("type" to "string")
+                ),
+                "required" to listOf("grab_id", "node_id")
             ))
         )
     }

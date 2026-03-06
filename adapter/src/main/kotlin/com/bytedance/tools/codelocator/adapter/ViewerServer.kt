@@ -226,6 +226,7 @@ class ViewerHttpServer(
                     val screenshotPath = grabDir.resolve("screenshot.png")
                     val snapshotPath = grabDir.resolve("snapshot.json")
                     val indexPath = grabDir.resolve("index.json")
+                    val composeIndexPath = grabDir.resolve("compose_index.json")
                     respondJson(
                         exchange,
                         200,
@@ -235,7 +236,8 @@ class ViewerHttpServer(
                                 "grabDir" to grabDir.toString(),
                                 "screenshotPath" to if (Files.exists(screenshotPath)) screenshotPath.toString() else null,
                                 "snapshotPath" to if (Files.exists(snapshotPath)) snapshotPath.toString() else null,
-                                "indexPath" to if (Files.exists(indexPath)) indexPath.toString() else null
+                                "indexPath" to if (Files.exists(indexPath)) indexPath.toString() else null,
+                                "composeIndexPath" to if (Files.exists(composeIndexPath)) composeIndexPath.toString() else null
                             )
                         )
                     )

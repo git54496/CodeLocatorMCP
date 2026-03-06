@@ -4,7 +4,8 @@ plugins {
 }
 
 group = "com.bytedance.tools"
-version = "0.1.0"
+val adapterVersion = file("../VERSION").readText().trim()
+version = adapterVersion
 
 repositories {
     mavenCentral()
@@ -28,4 +29,17 @@ application {
 
 tasks.test {
     useJUnitPlatform()
+}
+
+tasks.processResources {
+    inputs.property("appVersion", adapterVersion)
+    filesMatching("codelocator-adapter.properties") {
+        expand(mapOf("appVersion" to adapterVersion))
+    }
+}
+
+tasks.withType<Jar>().configureEach {
+    manifest {
+        attributes["Implementation-Version"] = adapterVersion
+    }
 }

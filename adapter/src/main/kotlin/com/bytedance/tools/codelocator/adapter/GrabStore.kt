@@ -75,7 +75,14 @@ class GrabStore {
         if (!file.exists()) {
             throw AdapterException("INVALID_ARGUMENT", "grab_id not found: $grabId")
         }
-        return Jsons.gson.fromJson(file.readText(), GrabSnapshot::class.java)
+        val root = Jsons.parseObject(file.readText())
+        if (!root.has("indexes") || root.get("indexes").isJsonNull) {
+            root.add("indexes", JsonObject())
+        }
+        if (!root.has("composeIndexes") || root.get("composeIndexes").isJsonNull) {
+            root.add("composeIndexes", JsonObject())
+        }
+        return Jsons.gson.fromJson(root, GrabSnapshot::class.java)
     }
 
     fun loadScreenshot(grabId: String): ByteArray? {
@@ -95,6 +102,26 @@ class GrabStore {
             }
         }
         return out
+    }
+
+    fun getComposeIndex(grabId: String): Map<String, ComposeIndexItem> {
+        val file = Constants.grabsRoot.resolve(grabId).resolve("compose_index.json").toFile()
+        if (!file.exists()) {
+            val snapshot = loadSnapshot(grabId)
+            if (snapshot.composeIndexes.isNotEmpty()) return snapshot.composeIndexes
+            return buildComposeIndex(snapshot.uiTree)
+        }
+        val root = Jsons.readJsonObject(file)
+        val out = linkedMapOf<String, ComposeIndexItem>()
+        root.entrySet().forEach { (k, v) ->
+            if (v.isJsonObject) {
+                out[k] = Jsons.gson.fromJson(v, ComposeIndexItem::class.java)
+            }
+        }
+        if (out.isNotEmpty()) return out
+        val snapshot = loadSnapshot(grabId)
+        if (snapshot.composeIndexes.isNotEmpty()) return snapshot.composeIndexes
+        return buildComposeIndex(snapshot.uiTree)
     }
 
     fun getViewRaw(grabId: String, memAddr: String): Map<String, Any?>? {
@@ -125,6 +152,46 @@ class GrabStore {
         Files.writeString(dir.resolve("meta.json"), Jsons.toJson(meta))
         Files.writeString(dir.resolve("snapshot.json"), Jsons.toJson(snapshot))
         Files.writeString(dir.resolve("index.json"), Jsons.toJson(snapshot.indexes))
+        Files.writeString(dir.resolve("compose_index.json"), Jsons.toJson(snapshot.composeIndexes))
+    }
+
+    private fun buildComposeIndex(tree: List<ViewNodeDto>): Map<String, ComposeIndexItem> {
+        val out = linkedMapOf<String, ComposeIndexItem>()
+        tree.forEach { fillComposeIndex(it, out) }
+        return out
+    }
+
+    private fun fillComposeIndex(node: ViewNodeDto, out: MutableMap<String, ComposeIndexItem>) {
+        node.composeNodes.forEach { composeNode ->
+            fillComposeNodeIndex(node.memAddr, composeNode, out)
+        }
+        node.children.forEach { fillComposeIndex(it, out) }
+    }
+
+    private fun fillComposeNodeIndex(hostMemAddr: String, node: ComposeNodeDto, out: MutableMap<String, ComposeIndexItem>) {
+        val composeKey = "$hostMemAddr:${node.nodeId}"
+        out[composeKey] = ComposeIndexItem(
+            composeKey = composeKey,
+            hostMemAddr = hostMemAddr,
+            nodeId = node.nodeId,
+            left = node.left,
+            top = node.top,
+            right = node.right,
+            bottom = node.bottom,
+            text = node.text,
+            contentDescription = node.contentDescription,
+            testTag = node.testTag,
+            clickable = node.clickable,
+            enabled = node.enabled,
+            focused = node.focused,
+            visibleToUser = node.visibleToUser,
+            selected = node.selected,
+            checkable = node.checkable,
+            checked = node.checked,
+            focusable = node.focusable,
+            actions = node.actions
+        )
+        node.children.forEach { child -> fillComposeNodeIndex(hostMemAddr, child, out) }
     }
 
     private fun generateGrabId(): String {

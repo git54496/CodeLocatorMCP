@@ -5,6 +5,14 @@ object AdapterCli {
         return try {
             val commandArgs = if (args.isEmpty()) listOf("live") else args.toList()
             when (commandArgs[0]) {
+                "version", "-v", "--version" -> {
+                    println(BuildInfo.version)
+                    0
+                }
+                "help", "-h", "--help" -> {
+                    printUsage()
+                    0
+                }
                 "mcp" -> {
                     McpStdioServer(service).run()
                     0
@@ -37,6 +45,10 @@ object AdapterCli {
             return 1
         }
         return when (args[0]) {
+            "help", "-h", "--help" -> {
+                printUsage()
+                0
+            }
             "live" -> {
                 val device = readOption(args, "--device-serial")
                 val result = service.grabLive(device)
@@ -100,6 +112,11 @@ object AdapterCli {
             return 1
         }
         return when (args[0]) {
+            "help", "-h", "--help" -> {
+                printUsage()
+                0
+            }
+
             "view-data" -> {
                 val grabId = requireOpt(args, "--grab-id")
                 val memAddr = requireOpt(args, "--mem-addr")
@@ -119,6 +136,14 @@ object AdapterCli {
             "touch" -> {
                 val grabId = requireOpt(args, "--grab-id")
                 val result = service.traceTouch(grabId)
+                println(Jsons.toJson(result))
+                if (result.success) 0 else 1
+            }
+
+            "compose-node" -> {
+                val grabId = requireOpt(args, "--grab-id")
+                val nodeId = requireOpt(args, "--node-id")
+                val result = service.getComposeNode(grabId, nodeId)
                 println(Jsons.toJson(result))
                 if (result.success) 0 else 1
             }
@@ -145,6 +170,9 @@ object AdapterCli {
             """
             grab usage:
               grab                            # default: grab live
+              grab --version
+              grab --help
+              grab help
               grab live --device-serial <optional>
               grab file --path <optional>
               grab list
@@ -153,6 +181,7 @@ object AdapterCli {
               grab inspect view-data --grab-id <id> --mem-addr <addr>
               grab inspect class-info --grab-id <id> --mem-addr <addr>
               grab inspect touch --grab-id <id>
+              grab inspect compose-node --grab-id <id> --node-id <compose_node_id_or_compose_key>
               grab mcp
 
             legacy compatibility:
